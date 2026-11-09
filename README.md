@@ -5,7 +5,7 @@
 ## 安装
 
 ```bash
-bun install -g ru-yaka/p
+bun install -g tmadamtaylor21217/p
 ```
 
 安装完成后，运行 `p` 命令即可使用。
@@ -15,7 +15,7 @@ bun install -g ru-yaka/p
 ### 从源码安装
 
 ```bash
-git clone https://github.com/ru-yaka/p.git
+git clone https://github.com/tmadamtaylor21217/p.git
 cd p
 bun install
 bun run link

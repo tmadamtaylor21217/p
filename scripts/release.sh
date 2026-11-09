@@ -37,7 +37,7 @@ echo ""
 echo ">>> 5. 远程安装验证"
 sleep 5
 rm -f ~/.bun/install/global/bun.lock
-bun install -g --force ru-yaka/p 2>&1
+bun install -g --force tmadamtaylor21217/p 2>&1
 
 echo ""
 echo ">>> 6. 远程冒烟测试"

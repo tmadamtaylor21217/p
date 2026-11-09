@@ -56,7 +56,7 @@ export const updateCommand = new Command("update")
 		// 先删除缓存，再重新安装（解决 Bun 缓存旧 GitHub commit 的问题）
 		await execAndCapture("bun remove -g p", process.cwd());
 		const installResult = await execAndCapture(
-			"bun install -g ru-yaka/p",
+			"bun install -g tmadamtaylor21217/p",
 			process.cwd(),
 		);
 
@@ -65,7 +65,7 @@ export const updateCommand = new Command("update")
 			console.log();
 			printError(`更新失败: ${installResult.error || installResult.output}`);
 			console.log();
-			printInfo("手动更新: bun remove -g p && bun install -g ru-yaka/p");
+			printInfo("手动更新: bun remove -g p && bun install -g tmadamtaylor21217/p");
 			process.exit(1);
 		}
 

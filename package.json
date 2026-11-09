@@ -2,11 +2,11 @@
 	"name": "p",
 	"version": "1.24.2",
 	"description": "项目管理 CLI 工具 - 快速创建和管理项目",
-	"author": "ru-yaka",
+	"author": "tmadamtaylor21217",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/ru-yaka/p.git"
+		"url": "git+https://github.com/tmadamtaylor21217/p.git"
 	},
 	"type": "module",
 	"bin": {
