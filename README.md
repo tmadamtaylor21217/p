@@ -43,6 +43,7 @@ p update
 | `p ls t` | 列出所有模板 |
 | `p ls t -r` | 只列出已发布的远程模板 |
 | `p open [name]` | 打开项目（实时搜索，按 a 全部打开） |
+| `p s [name]` | 模糊搜索项目（实时筛选，回车打开；支持多选批量） |
 | `p recent` | 最近项目列表（j/k 移动，o 打开，d 删除） |
 | `p open [name] -i <ide>` | 用指定 IDE 打开 |
 | `p open . -i <ide>` | 用指定 IDE 打开当前目录 |
@@ -287,11 +288,13 @@ p new "做一个 github 私有仓库邀请机器人，让用户安装、接入�
 
 ## 实时搜索
 
-`p open`、`p delete`、`p templates add` 支持实时搜索：
+`p s`、`p open`、`p delete`、`p templates add` 支持实时搜索：
 
 - 边输入边筛选
 - ↑↓ 选择，Enter 确认
 - Esc 取消
+
+模糊匹配为子序列算法（fzf 风格）：`p s acrs` 能命中 `acards`，连续匹配、词首命中的项目排在前面；项目名、模板名、标签都参与匹配。`p s <name>` 唯一命中时直接打开，多命中进入实时搜索界面。
 
 ## First Prompt
 

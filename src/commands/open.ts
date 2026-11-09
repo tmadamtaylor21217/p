@@ -58,7 +58,7 @@ async function searchAndSelect(
 /**
  * 解析实际打开方式：-i 显式指定 > config.editor > 自动探测 GUI IDE
  */
-async function resolveOpenIde(
+export async function resolveOpenIde(
 	config: Config,
 	options?: { ide?: string },
 ): Promise<string> {
@@ -70,6 +70,128 @@ async function resolveOpenIde(
 	throw new Error(
 		"未找到可用的 GUI IDE，请在 ~/.p/config.yaml 中配置 editor 字段（如 editor: cursor）",
 	);
+}
+
+/**
+ * 选择并打开项目：无 name 进实时搜索；有 name 模糊匹配
+ * （唯一命中直接打开，多命中进交互搜索）。open / search 命令共用。
+ */
+export async function selectAndOpenProjects(
+	ide: string,
+	options: { ide?: string } | undefined,
+	name?: string,
+): Promise<void> {
+	const projects = listProjects();
+
+	if (projects.length === 0) {
+		console.log();
+		printInfo(`暂无项目，使用 ${brand.primary("p new")} 创建新项目`);
+		console.log();
+		return;
+	}
+
+	let projectNames: string[];
+
+	if (!name) {
+		projectNames = await searchAndSelect(projects);
+	} else if (!projectExists(name)) {
+		const filtered = filterProjects(projects, name);
+		if (filtered.length === 1) {
+			const matchedName = filtered[0]?.name ?? name;
+			console.log(pc.dim("  匹配到: ") + brand.primary(matchedName));
+			projectNames = [matchedName];
+		} else if (filtered.length > 1) {
+			console.log(pc.dim(`  匹配到 ${filtered.length} 个项目`));
+			projectNames = await searchAndSelect(projects, name);
+		} else {
+			printError(`项目不存在: ${name}`);
+			console.log(
+				pc.dim("使用 ") + brand.primary("p ls") + pc.dim(" 查看所有项目"),
+			);
+			process.exit(1);
+		}
+	} else {
+		projectNames = [name];
+	}
+
+	// 批量打开
+	if (projectNames.length > 1) {
+		for (const pName of projectNames) {
+			try {
+				await openWithIDE(ide, getProjectPath(pName));
+				console.log(`${brand.success("✓")} 已打开: ${brand.primary(pName)}`);
+			} catch (error) {
+				printError(`${pName}: ${(error as Error).message}`);
+			}
+		}
+		return;
+	}
+
+	// 单个打开
+	const projectName = projectNames[0] ?? name ?? "";
+	const projectPath = getProjectPath(projectName);
+	const currentDir = process.cwd();
+
+	if (projectPath === currentDir) {
+		console.log();
+		printInfo(`已在项目目录: ${brand.primary(projectName)}`);
+		console.log();
+		return;
+	}
+
+	const meta = getProjectMeta(projectName);
+	if (meta?.originalPath && fse.existsSync(meta.originalPath)) {
+		const shouldDelete = await confirm({
+			message: `检测到原始路径仍存在: ${pc.underline(meta.originalPath)}\n  是否删除原始目录？`,
+			initialValue: false,
+		});
+
+		if (!isCancel(shouldDelete) && shouldDelete) {
+			const s = spinner();
+			s.start("正在删除原始目录...");
+			try {
+				await fse.remove(meta.originalPath);
+				clearOriginalPath(projectName);
+				s.stop("原始目录已删除");
+			} catch (error) {
+				s.stop("删除原始目录失败");
+				printError((error as Error).message);
+			}
+		}
+	}
+
+	if (isTUICommand(ide)) {
+		// TUI（如 claude）前台运行，不能用 spinner
+		try {
+			await openWithIDE(ide, projectPath, !!options?.ide);
+		} catch (error) {
+			console.log();
+			printError((error as Error).message);
+			console.log();
+			console.log(pc.dim("  项目路径: ") + pc.underline(projectPath));
+			console.log();
+			process.exit(1);
+		}
+		return;
+	}
+
+	const s = spinner();
+	s.start(`正在打开...`);
+
+	try {
+		const { resolved } = await openWithIDE(ide, projectPath, !!options?.ide);
+		s.stop(
+			`${brand.success("✓")} 已用 ${brand.primary(resolved)} 打开: ${brand.secondary(projectName)}`,
+		);
+	} catch (error) {
+		s.stop("打开失败");
+		console.log();
+		printError((error as Error).message);
+		console.log();
+		console.log(pc.dim("  项目路径: ") + pc.underline(projectPath));
+		console.log();
+		process.exit(1);
+	}
 }
 
 export const openCommand = new Command("open")
@@ -151,115 +273,5 @@ export const openCommand = new Command("open")
 			return;
 		}
 
-		const projects = listProjects();
-
-		if (projects.length === 0) {
-			console.log();
-			printInfo(`暂无项目，使用 ${brand.primary("p new")} 创建新项目`);
-			console.log();
-			return;
-		}
-
-		let projectNames: string[];
-
-		if (!name) {
-			projectNames = await searchAndSelect(projects);
-		} else if (!projectExists(name)) {
-			const filtered = filterProjects(projects, name);
-			if (filtered.length === 1) {
-				const matchedName = filtered[0]?.name ?? name;
-				console.log(pc.dim("  匹配到: ") + brand.primary(matchedName));
-				projectNames = [matchedName];
-			} else if (filtered.length > 1) {
-				console.log(pc.dim(`  匹配到 ${filtered.length} 个项目`));
-				projectNames = await searchAndSelect(projects, name);
-			} else {
-				printError(`项目不存在: ${name}`);
-				console.log(
-					pc.dim("使用 ") + brand.primary("p ls") + pc.dim(" 查看所有项目"),
-				);
-				process.exit(1);
-			}
-		} else {
-			projectNames = [name];
-		}
-
-		// 批量打开
-		if (projectNames.length > 1) {
-			for (const pName of projectNames) {
-				try {
-					await openWithIDE(ide, getProjectPath(pName));
-					console.log(`${brand.success("✓")} 已打开: ${brand.primary(pName)}`);
-				} catch (error) {
-					printError(`${pName}: ${(error as Error).message}`);
-				}
-			}
-			return;
-		}
-
-		// 单个打开
-		const projectName = projectNames[0] ?? name ?? "";
-		const projectPath = getProjectPath(projectName);
-		const currentDir = process.cwd();
-
-		if (projectPath === currentDir) {
-			console.log();
-			printInfo(`已在项目目录: ${brand.primary(projectName)}`);
-			console.log();
-			return;
-		}
-
-		const meta = getProjectMeta(projectName);
-		if (meta?.originalPath && fse.existsSync(meta.originalPath)) {
-			const shouldDelete = await confirm({
-				message: `检测到原始路径仍存在: ${pc.underline(meta.originalPath)}\n  是否删除原始目录？`,
-				initialValue: false,
-			});
-
-			if (!isCancel(shouldDelete) && shouldDelete) {
-				const s = spinner();
-				s.start("正在删除原始目录...");
-				try {
-					await fse.remove(meta.originalPath);
-					clearOriginalPath(projectName);
-					s.stop("原始目录已删除");
-				} catch (error) {
-					s.stop("删除原始目录失败");
-					printError((error as Error).message);
-				}
-			}
-		}
-
-		if (isTUICommand(ide)) {
-			// TUI（如 claude）前台运行，不能用 spinner
-			try {
-				await openWithIDE(ide, projectPath, !!options?.ide);
-			} catch (error) {
-				console.log();
-				printError((error as Error).message);
-				console.log();
-				console.log(pc.dim("  项目路径: ") + pc.underline(projectPath));
-				console.log();
-				process.exit(1);
-			}
-			return;
-		}
-
-		const s = spinner();
-		s.start(`正在打开...`);
-
-		try {
-			const { resolved } = await openWithIDE(ide, projectPath, !!options?.ide);
-			s.stop(
-				`${brand.success("✓")} 已用 ${brand.primary(resolved)} 打开: ${brand.secondary(projectName)}`,
-			);
-		} catch (error) {
-			s.stop("打开失败");
-			console.log();
-			printError((error as Error).message);
-			console.log();
-			console.log(pc.dim("  项目路径: ") + pc.underline(projectPath));
-			console.log();
-			process.exit(1);
-		}
+		await selectAndOpenProjects(ide, options, name);
 	});
