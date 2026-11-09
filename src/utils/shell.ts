@@ -8,8 +8,11 @@ import {
 import { dirname, join } from "node:path";
 import { $ } from "bun";
 import pc from "picocolors";
+import { loadConfig } from "../core/config";
+import { maybeWatchCchiveSync } from "./cchive";
 import { P_ROOT } from "./paths";
-import { brand } from "./ui";
+import { isClaudeCommand, resolveOverflowSettings } from "./providers";
+import { brand, printInfo } from "./ui";
 
 // IDE 缓存文件路径
 const IDE_CACHE_PATH = join(P_ROOT, "ide-cache.json");
@@ -142,6 +145,22 @@ export function isTUICommand(ide: string): boolean {
 	return TUI_COMMANDS.has(ide.trim().split(/\s+/)[0] ?? "");
 }
 
+// 支持"位置参数为初始 prompt"前台启动的 TUI 命令
+// （--dangerously-skip-permissions 是 claude 专属 flag，故白名单仅 claude；codex/gemini 实测后再加）
+const PROMPT_TUI_COMMANDS = new Set(["claude"]);
+
+/**
+ * 判断 TUI 命令是否支持带初始 prompt 启动（如 claude "需求描述"）
+ */
+export function supportsPromptArg(ide: string): boolean {
+	return PROMPT_TUI_COMMANDS.has(ide.trim().split(/\s+/)[0] ?? "");
+}
+
+/** POSIX shell 单引号转义（片段路径含空格/引号时安全） */
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 /**
  * 用 IDE 打开路径
  */
@@ -169,8 +188,27 @@ export async function openWithIDE(
 		const shell = isWindows ? process.env.COMSPEC || "cmd.exe" : "/bin/sh";
 		const shellArgs = isWindows ? ["/c"] : ["-c"];
 
+		// TUI 启动的新会话自动同步到 CCHive（cchiveSync 配置，默认开）——
+		// 所有经 openWithIDE 打开 TUI 的命令（new/open/cc/recent/clone 等）统一在此覆盖
+		const watcher = maybeWatchCchiveSync(loadConfig().cchiveSync, cwd);
+
+		// 默认渠道（套餐）全账号并发满 → 溢出到配置的 API provider。注入只能走
+		// --settings 片段：settings.json 的 env 块会覆盖继承的进程环境变量。
+		// 仅 claude 走这条（codex/gemini/aider 不吃该参数，也没有 provider 配置）。
+		const overflow = isClaudeCommand(resolved)
+			? await resolveOverflowSettings()
+			: null;
+		const command = overflow
+			? `${resolved} --settings ${shellQuote(overflow.settingsPath)}`
+			: resolved;
+		if (overflow) {
+			printInfo(
+				`默认渠道已满，溢出到 ${brand.primary(overflow.provider.name)}`,
+			);
+		}
+
 		try {
-			const proc = Bun.spawn([shell, ...shellArgs, resolved], {
+			const proc = Bun.spawn([shell, ...shellArgs, command], {
 				cwd,
 				stdin: "inherit",
 				stdout: "inherit",
@@ -183,6 +221,8 @@ export async function openWithIDE(
 			throw new Error(
 				`无法打开 ${ide}，请确保 ${resolved} 命令已安装并添加到 PATH 环境变量。`,
 			);
+		} finally {
+			watcher?.stop();
 		}
 	}
 

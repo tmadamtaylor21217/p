@@ -10,6 +10,7 @@ import { Command } from "commander";
 import fse from "fs-extra";
 import pc from "picocolors";
 
+import { loadConfig } from "../core/config";
 import {
 	clearAllProjectMeta,
 	deleteProjectMeta,
@@ -17,6 +18,7 @@ import {
 	listProjects,
 	projectExists,
 } from "../core/project";
+import { maybeRemoveCchiveDirs, toRealPath } from "../utils/cchive";
 import { CANCEL, liveSearch } from "../utils/live-search";
 import { filterProjects, projectHint } from "../utils/project-search";
 import { bgOrange, brand, printError, printInfo } from "../utils/ui";
@@ -104,11 +106,14 @@ async function batchDelete(projectNames: string[]) {
 	const results = await Promise.allSettled(
 		projectNames.map(async (name, index) => {
 			try {
-				await fse.remove(getProjectPath(name));
-				return { success: true, name, index };
+				const path = getProjectPath(name);
+				// 删除前解析 realpath：CCHive 订阅存 realpath 形态，目录删除后 real 不出来
+				const realPath = toRealPath(path);
+				await fse.remove(path);
+				return { success: true as const, name, realPath, index };
 			} catch (error) {
 				const err = error as Error;
-				return { success: false, name, error: err.message, index };
+				return { success: false as const, name, error: err.message, index };
 			}
 		}),
 	);
@@ -118,6 +123,7 @@ async function batchDelete(projectNames: string[]) {
 	console.log();
 	let deletedCount = 0;
 	const errors: string[] = [];
+	const removedCwds: string[] = [];
 
 	for (const result of results) {
 		if (result.status === "fulfilled") {
@@ -125,6 +131,7 @@ async function batchDelete(projectNames: string[]) {
 			if (r.success) {
 				deletedCount++;
 				deleteProjectMeta(r.name);
+				removedCwds.push(r.realPath);
 				console.log(
 					`  ${brand.success("✓")} [${r.index + 1}/${projectNames.length}] ${r.name}`,
 				);
@@ -136,6 +143,9 @@ async function batchDelete(projectNames: string[]) {
 			}
 		}
 	}
+
+	// 同步 CCHive：清掉已删项目的目录订阅，侧栏不残留（静默，失败不影响删除结果）
+	await maybeRemoveCchiveDirs(loadConfig().cchiveSync, removedCwds);
 
 	console.log();
 	if (errors.length > 0) {
@@ -196,11 +206,18 @@ export const deleteCommand = new Command("delete")
 			const results = await Promise.allSettled(
 				projects.map(async (project, index) => {
 					try {
+						// 删除前解析 realpath：CCHive 订阅存 realpath 形态，目录删除后 real 不出来
+						const realPath = toRealPath(project.path);
 						await fse.remove(project.path);
-						return { success: true, project, index };
+						return { success: true as const, project, realPath, index };
 					} catch (error) {
 						const err = error as Error;
-						return { success: false, project, error: err.message, index };
+						return {
+							success: false as const,
+							project,
+							error: err.message,
+							index,
+						};
 					}
 				}),
 			);
@@ -211,6 +228,7 @@ export const deleteCommand = new Command("delete")
 			console.log();
 			let deletedCount = 0;
 			const errors: string[] = [];
+			const removedCwds: string[] = [];
 
 			// 按索引排序结果以保持显示顺序
 			const sortedResults = results
@@ -231,6 +249,7 @@ export const deleteCommand = new Command("delete")
 				if (result.status === "fulfilled") {
 					if (result.value.success) {
 						deletedCount++;
+						removedCwds.push(result.value.realPath);
 						console.log(
 							`  ${brand.success("✓")} [${result.value.index + 1}/${projects.length}] ${result.value.project.name}`,
 						);
@@ -245,8 +264,9 @@ export const deleteCommand = new Command("delete")
 				}
 			}
 
-			// 清除所有元数据
+			// 清除所有元数据；同步 CCHive：清掉已删项目的目录订阅（静默，失败不影响删除结果）
 			clearAllProjectMeta();
+			await maybeRemoveCchiveDirs(loadConfig().cchiveSync, removedCwds);
 
 			console.log();
 			if (errors.length > 0) {
@@ -424,8 +444,12 @@ export const deleteCommand = new Command("delete")
 		s.start(`正在删除 ${projectName}...`);
 
 		try {
+			// 删除前解析 realpath：CCHive 订阅存 realpath 形态，目录删除后 real 不出来
+			const realPath = toRealPath(projectPath);
 			await fse.remove(projectPath);
 			deleteProjectMeta(projectName);
+			// 同步 CCHive：清掉目录订阅，侧栏不残留（静默，失败不影响删除结果）
+			await maybeRemoveCchiveDirs(loadConfig().cchiveSync, [realPath]);
 			s.stop(`${brand.success("✓")} 已删除: ${brand.primary(projectName)}`);
 		} catch (error) {
 			s.stop("删除失败");

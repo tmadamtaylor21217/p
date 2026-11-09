@@ -18,27 +18,16 @@ export interface HookDefinition {
 }
 
 /**
- * AI 配置
- */
-export interface AIConfig {
-	provider?: "glm" | "deepseek"; // AI 服务商（单源，向后兼容）
-	providers?: Array<"glm" | "deepseek">; // 优先级列表，前一个失败时 fallback 到下一个
-	model?: string; // 模型名（不填用 provider 默认）
-	count?: number; // 生成名称数量，默认 5，范围 5-20
-}
-
-/**
  * 主配置文件
  */
 export interface Config {
 	ide: string;
-	apiKey?: string; // 智谱 GLM API Key（也可 ZHIPU_API_KEY 环境变量）
-	deepseekApiKey?: string; // DeepSeek API Key（也可 DEEPSEEK_API_KEY 环境变量）
-	ai?: AIConfig;
+	editor?: string; // GUI IDE（p o 用它打开；留空时自动探测 cursor/code/windsurf/trae）
 	hooks: Record<string, HookDefinition>;
 	templates: Record<string, TemplateConfig>;
 	shortcuts?: Record<string, string>;
 	recentCount?: number;
+	cchiveSync?: boolean; // p new 启动 claude 会话后自动同步到 CCHive 侧栏（~/.claude/cchive.json）
 	ignore?: string[];
 	sync?: {
 		exclude?: string[];
@@ -71,7 +60,8 @@ export interface ProjectMetaData {
 	createdAt: string;
 	originalPath?: string;
 	tags?: string[];
-	note?: string;
+	/** 创建项目时的第一个 prompt（原 note 字段，读取时自动迁移） */
+	firstPrompt?: string;
 }
 
 /**
@@ -93,5 +83,5 @@ export interface ProjectInfo {
 	modifiedAt: Date;
 	originalPath?: string;
 	tags?: string[];
-	note?: string;
+	firstPrompt?: string;
 }

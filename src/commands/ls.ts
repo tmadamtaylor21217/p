@@ -4,7 +4,7 @@ import pc from "picocolors";
 import { listProjects } from "../core/project";
 import { getLocalTemplates, getPublishedTemplates } from "../core/template";
 import { TEMPLATES_DIR } from "../utils/paths";
-import { brand, formatRelativeTime, printInfo } from "../utils/ui";
+import { brand, formatRelativeTime, printInfo, wrapByWidth } from "../utils/ui";
 
 async function listTemplates(remoteOnly: boolean) {
 	const published = getPublishedTemplates();
@@ -124,7 +124,6 @@ export const lsCommand = new Command("ls")
 				project.tags && project.tags.length > 0
 					? ` ${project.tags.map((t) => pc.magenta(`#${t}`)).join(" ")}`
 					: "";
-			const noteDisplay = project.note ? ` ${pc.dim(`— ${project.note}`)}` : "";
 
 			console.log(
 				"  " +
@@ -133,10 +132,16 @@ export const lsCommand = new Command("ls")
 					brand.bold(project.name) +
 					templateTag +
 					tagDisplay +
-					noteDisplay +
 					pc.dim(`  ${timeStr}`),
 			);
 			console.log(pc.dim(`    ${project.path}`));
+			// first prompt 放路径下面，按终端宽度折行
+			if (project.firstPrompt) {
+				const columns = process.stdout.columns ?? 80;
+				for (const line of wrapByWidth(project.firstPrompt, columns - 4)) {
+					console.log(pc.dim(`    ${line}`));
+				}
+			}
 			console.log();
 		}
 

@@ -3,6 +3,13 @@ import fse from "fs-extra";
 import type { Metadata, ProjectInfo, ProjectMetaData } from "../types";
 import { METADATA_PATH, PROJECTS_DIR } from "../utils/paths";
 
+/** meta.json 里的旧字段名（firstPrompt 前身），读取时自动迁移 */
+type LegacyMeta = ProjectMetaData & { note?: string };
+
+function legacyNote(meta: ProjectMetaData | undefined): string | undefined {
+	return (meta as LegacyMeta | undefined)?.note;
+}
+
 /**
  * 读取全局元数据
  */
@@ -58,7 +65,7 @@ export function listProjects(): ProjectInfo[] {
 				modifiedAt: stat.mtime,
 				originalPath: meta?.originalPath,
 				tags: meta?.tags,
-				note: meta?.note,
+				firstPrompt: meta?.firstPrompt ?? legacyNote(meta),
 			});
 		}
 	}
@@ -74,7 +81,13 @@ export function listProjects(): ProjectInfo[] {
  */
 export function getProjectMeta(projectName: string): ProjectMetaData | null {
 	const metadata = loadMetadata();
-	return metadata.projects[projectName] || null;
+	const meta = metadata.projects[projectName] as LegacyMeta | undefined;
+	if (!meta) return null;
+	// 旧 note 字段归并为 firstPrompt
+	if (meta.firstPrompt === undefined && meta.note !== undefined) {
+		return { ...meta, firstPrompt: meta.note };
+	}
+	return meta;
 }
 
 /**
@@ -85,16 +98,20 @@ export function saveProjectMeta(
 	data: Partial<ProjectMetaData> = {},
 ): void {
 	const metadata = loadMetadata();
-	const existing = metadata.projects[projectName];
+	const existing = metadata.projects[projectName] as LegacyMeta | undefined;
+	const { note: legacy, ...legacyRest } = existing ?? {};
+	const rest: Partial<ProjectMetaData> = existing ? legacyRest : {};
 
 	metadata.projects[projectName] = {
-		...(existing || {}),
-		template: data.template ?? existing?.template,
-		savedTemplate: data.savedTemplate ?? existing?.savedTemplate,
-		createdAt: existing?.createdAt || new Date().toISOString(),
+		...rest,
+		template: data.template ?? rest.template,
+		savedTemplate: data.savedTemplate ?? rest.savedTemplate,
+		createdAt: rest.createdAt || new Date().toISOString(),
 		...(data.originalPath !== undefined && { originalPath: data.originalPath }),
 		...(data.tags !== undefined && { tags: data.tags }),
-		...(data.note !== undefined && { note: data.note }),
+		// "in" 判断：显式传 undefined 即清除（修复旧版 --clear 不生效的问题）
+		firstPrompt:
+			"firstPrompt" in data ? data.firstPrompt : (rest.firstPrompt ?? legacy),
 	};
 
 	saveMetadata(metadata);

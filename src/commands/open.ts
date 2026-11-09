@@ -11,9 +11,10 @@ import {
 	listProjects,
 	projectExists,
 } from "../core/project";
+import type { Config } from "../types";
 import { CANCEL, liveSearch } from "../utils/live-search";
 import { filterProjects, projectHint } from "../utils/project-search";
-import { isTUICommand, openWithIDE } from "../utils/shell";
+import { commandExists, isTUICommand, openWithIDE } from "../utils/shell";
 import { brand, printError, printInfo } from "../utils/ui";
 
 /**
@@ -54,9 +55,28 @@ async function searchAndSelect(
 	return result as string[];
 }
 
+/**
+ * 解析实际打开方式：-i 显式指定 > config.editor > 自动探测 GUI IDE
+ */
+async function resolveOpenIde(
+	config: Config,
+	options?: { ide?: string },
+): Promise<string> {
+	if (options?.ide) return options.ide;
+	if (config.editor) return config.editor;
+	for (const cmd of ["cursor", "code", "windsurf", "trae"]) {
+		if (await commandExists(cmd)) return cmd;
+	}
+	throw new Error(
+		"未找到可用的 GUI IDE，请在 ~/.p/config.yaml 中配置 editor 字段（如 editor: cursor）",
+	);
+}
+
 export const openCommand = new Command("open")
 	.alias("o")
-	.description("打开项目")
+	.description(
+		"打开项目（默认 GUI IDE 打开，p o :claude 可用 Claude Code 打开）",
+	)
 	.argument("[name]", "项目名称、搜索关键词，或 :ide 快速切换")
 	.option("-i, --ide <ide>", "指定 IDE")
 	.action(async (name?: string, options?: { ide?: string }) => {
@@ -92,9 +112,14 @@ export const openCommand = new Command("open")
 			return;
 		}
 
+		// 解析打开方式（-i 指定 > config.editor > 自动探测）
+		const ide = await resolveOpenIde(config, options).catch((error: Error) => {
+			printError(error.message);
+			process.exit(1);
+		});
+
 		// 处理 `p open . -i ide` 的情况：用指定 IDE 打开当前目录
 		if (name === ".") {
-			const ide = options?.ide || config.ide;
 			if (isTUICommand(ide)) {
 				// TUI（如 claude）前台运行，不能用 spinner
 				try {
@@ -158,8 +183,6 @@ export const openCommand = new Command("open")
 		} else {
 			projectNames = [name];
 		}
-
-		const ide = options?.ide || config.ide;
 
 		// 批量打开
 		if (projectNames.length > 1) {

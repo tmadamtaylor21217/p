@@ -88,3 +88,60 @@ export function formatRelativeTime(date: Date): string {
 	if (minutes > 0) return `${minutes} 分钟前`;
 	return "刚刚";
 }
+
+/**
+ * 单个字符的终端显示宽度（CJK/全角按 2 列）
+ */
+function charDisplayWidth(codePoint: number): number {
+	if (
+		(codePoint >= 0x1100 && codePoint <= 0x115f) || // Hangul Jamo
+		(codePoint >= 0x2e80 && codePoint <= 0xa4cf) || // CJK 部首 ~ Yi 音节
+		(codePoint >= 0xac00 && codePoint <= 0xd7a3) || // Hangul 音节
+		(codePoint >= 0xf900 && codePoint <= 0xfaff) || // CJK 兼容表意
+		(codePoint >= 0xfe30 && codePoint <= 0xfe4f) || // CJK 兼容形式
+		(codePoint >= 0xff00 && codePoint <= 0xff60) || // 全角 ASCII / 假名
+		(codePoint >= 0xffe0 && codePoint <= 0xffe6) || // 全角符号
+		(codePoint >= 0x20000 && codePoint <= 0x3fffd) // CJK 扩展
+	) {
+		return 2;
+	}
+	return 1;
+}
+
+/**
+ * 按显示宽度折行（用于长文本缩进展示）
+ */
+export function wrapByWidth(text: string, maxWidth: number): string[] {
+	const lines: string[] = [];
+	let line = "";
+	let width = 0;
+
+	for (const ch of Array.from(text)) {
+		const w = charDisplayWidth(ch.codePointAt(0) ?? 0);
+		if (width + w > maxWidth && line) {
+			lines.push(line);
+			line = "";
+			width = 0;
+		}
+		line += ch;
+		width += w;
+	}
+
+	if (line) lines.push(line);
+	return lines.length > 0 ? lines : [""];
+}
+
+/**
+ * 按显示宽度截断，超宽补省略号
+ */
+export function truncateByWidth(text: string, maxWidth: number): string {
+	let width = 0;
+	for (const [i, ch] of Array.from(text).entries()) {
+		const w = charDisplayWidth(ch.codePointAt(0) ?? 0);
+		if (width + w > maxWidth - 1) {
+			return `${text.slice(0, i)}…`;
+		}
+		width += w;
+	}
+	return text;
+}

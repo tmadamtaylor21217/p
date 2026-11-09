@@ -44,7 +44,7 @@ Help displays all aliases sorted longest-first (custom `Help.prototype.subcomman
 
 ```
 ~/.p/
-├── config.yaml        # User config (ide, ai, hooks, templates, shortcuts)
+├── config.yaml        # User config (ide, editor, hooks, templates, shortcuts)
 ├── meta.json          # Project metadata (template, tags, notes, dates)
 ├── projects/          # Project directories
 ├── templates/         # Local template directories (auto-discovered)

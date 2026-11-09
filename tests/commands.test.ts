@@ -1,5 +1,5 @@
-import { Command } from "commander";
 import { describe, expect, test } from "bun:test";
+import { Command } from "commander";
 
 // 重新导出所有命令注册，验证无冲突
 async function buildProgram() {
@@ -38,15 +38,15 @@ describe("command registration", () => {
 		const program = await buildProgram();
 		const template = program.commands.find((c) => c.name() === "template");
 		expect(template).toBeDefined();
-		expect(template!.aliases()).toContain("templates");
-		expect(template!.aliases()).toContain("tp");
+		expect(template?.aliases()).toContain("templates");
+		expect(template?.aliases()).toContain("tp");
 	});
 
 	test("tag has expected aliases", async () => {
 		const program = await buildProgram();
 		const tag = program.commands.find((c) => c.name() === "tag");
 		expect(tag).toBeDefined();
-		expect(tag!.aliases()).toContain("t");
-		expect(tag!.aliases()).toContain("tags");
+		expect(tag?.aliases()).toContain("t");
+		expect(tag?.aliases()).toContain("tags");
 	});
 });

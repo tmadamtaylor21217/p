@@ -10,7 +10,7 @@ bun install -g ru-yaka/p
 
 安装完成后，运行 `p` 命令即可使用。
 
-> **AI 命名功能**需要配置 DeepSeek 或智谱 GLM 的 API Key，见下方[配置说明](#配置)。
+> **需求描述创建**依赖本地已安装 [Claude Code](https://claude.com/claude-code) CLI（`claude` 命令），无需配置 API Key。
 
 ### 从源码安装
 
@@ -35,7 +35,7 @@ p update
 | `p new <name> #tag1 #tag2` | 创建新项目并添加标签 |
 | `p new -- <command>` | 在项目目录执行 CLI 初始化（如框架脚手架） |
 | `p new -- <alias> <name>` | 使用 config.yaml 中配置的快捷方式初始化 |
-| `p new -d "描述"` | AI 生成项目名称 |
+| `p new "需求描述"` | 根据需求生成候选项目名，创建后带需求进入 claude 会话开发 |
 | `p clone <url> [name]` | 克隆远程仓库到 p 管理 |
 | `p copy <path> [name]` | 复制目录作为新项目 |
 | `p add <path>` | 添加现有项目 |
@@ -53,8 +53,8 @@ p update
 | `p delete <a> <b> <c>` | 批量删除多个项目（支持混合通配符） |
 | `p delete` | 多选批量删除 |
 | `p delete <pattern*>` | 通配符匹配删除（如 `p delete test-*`） |
-| `p note <project> <text>` | 设置项目备注 |
-| `p note <project> --clear` | 清除备注 |
+| `p first-prompt <project> [text]` (`p fp`) | 查看/设置项目 first prompt（创建时的初始需求） |
+| `p fp <project> --clear` | 清除 first prompt |
 | `p templates` / `p tp` | 管理模板 |
 | `p hooks` | 管理 hooks |
 | `p config` | 打开配置文件 |
@@ -268,43 +268,22 @@ p sync import path/to/file.zip  # 指定文件
 - 导入后提示删除 `Downloads/p-sync` 目录
 - macOS 通过 shell 命令绕过 TCC 权限限制
 
-## AI 命名
+## 需求描述创建
 
-使用 AI 生成项目名称，支持 **DeepSeek** 和 **智谱 GLM** 两个服务商：
+`p new` 的位置参数带引号传自然语言需求（含中文或多个词），会调用本地 **Claude Code** CLI（`claude -p`，无需 API Key）生成候选项目名，创建项目后带需求描述直接进入 claude 会话开发：
 
 ```bash
-# 交互式选择
-p new -d "一个博客项目"
-
-# 调试模式（显示 provider、首字符响应时间、token 统计）
-p new -d "一个博客项目" --debug
+p new "做一个 github 私有仓库邀请机器人，让用户安装、接入，然后分发邀请链接"
 ```
 
-AI 命名功能支持：
-- 实时流式输出名称
-- 直接输入自定义名称（无需先选择再输入）
-- "换一批"排除已生成的名称
+流程：
+1. 识别为需求描述（含中文或多个词；单个合法项目名仍走快速模式）
+2. `claude -p` 生成 5 个 kebab-case 候选名（自动过滤已存在的项目名）
+3. 选择候选 / 直接输入自定义名 / "换一批"（排除已生成过的名称）
+4. 跳过模板选择直接使用空项目模板（显式传 `-t` 仍可指定）→ 创建目录 → 执行 hooks
+5. 需求描述作为 first prompt 存入项目元数据（`p fp` 可查看），并作为初始 prompt 前台启动 claude 会话
 
-### 切换 Provider
-
-通过 `ai.provider` 显式指定，缺省时按已配置的 key 自动推断（只配了 DeepSeek 就用 DeepSeek，否则默认 GLM）：
-
-```yaml
-ai:
-  provider: deepseek  # glm | deepseek
-  model: deepseek-v4-flash  # 留空时按 provider 选默认
-```
-
-### 多源 Fallback
-
-配 `ai.providers` 优先级列表，前一个失败（HTTP 错误、鉴权失败等）时自动切换到下一个：
-
-```yaml
-ai:
-  providers: [deepseek, glm]  # DeepSeek 主用，失败时切到 GLM
-```
-
-UI 会展示当前使用的源，fallback 时显示 `(智谱 GLM 失败，使用 DeepSeek)` 提示。流式输出开始后不再 fallback（避免结果错乱）。
+未安装 `claude` CLI 或生成失败/超时（60s）时，自动回退为手动输入项目名，创建后正常打开（`config.ide`）。
 
 ## 实时搜索
 
@@ -314,28 +293,29 @@ UI 会展示当前使用的源，fallback 时显示 `(智谱 GLM 失败，使用
 - ↑↓ 选择，Enter 确认
 - Esc 取消
 
-## 项目备注
+## First Prompt
 
-为项目添加备注，在搜索和列表中显示，方便区分同名项目：
+项目创建时的第一个 prompt（需求描述）会存为项目的 first prompt，在搜索和列表中显示，方便回忆项目是做什么的：
 
 ```bash
-# 设置备注
-p note heroui-v3-pro-test "原生版测试"
-p note . "当前项目的备注"
+# 查看/设置
+p fp heroui-v3-pro-test "原生版测试"
+p fp . "当前项目的 first prompt"
 
 # 交互输入
-p note heroui-v3-pro-test
+p fp heroui-v3-pro-test
 
-# 清除备注
-p note heroui-v3-pro-test --clear
+# 清除
+p fp heroui-v3-pro-test --clear
 
-# 查看当前项目备注
-p note
+# 查看当前项目的 first prompt
+p fp
 ```
 
-备注会显示在：
-- `p open` / `p delete` 搜索列表的 hint 中
-- `p ls` 项目列表中
+first prompt 会显示在：
+- `p open` / `p delete` 搜索列表的 hint 中（截断显示）
+- `p ls` 项目列表中（路径下方，按终端宽度折行）
+- `p recent` 中（截断显示）
 
 ## 批量删除
 
@@ -384,20 +364,6 @@ p tp
 # 默认打开方式（claude 等 AI CLI 会在项目目录直接启动终端会话；也可用 cursor, code 等 GUI IDE）
 ide: claude
 
-# 智谱 GLM API Key（AI 命名用，二选一）
-# 在 https://open.bigmodel.cn/ 申请
-apiKey: your-glm-key
-
-# DeepSeek API Key（AI 命名用，二选一）
-# 在 https://platform.deepseek.com/ 申请
-deepseekApiKey: your-deepseek-key
-
-# AI 配置
-ai:
-  # provider: glm  # glm | deepseek，缺省时按已配置的 key 自动推断
-  model: glm-4.7-flash  # 留空时按 provider 选默认
-  count: 5              # 生成名称数量（5-20）
-
 # 命令快捷方式（用于 p new -- <别名> <项目名>）
 shortcuts:
   heroui: npx -y heroui-cli@latest init
@@ -416,14 +382,3 @@ templates:
     hooks:
       - gitInit
 ```
-
-### AI 配置说明
-
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `apiKey` | 智谱 GLM API Key，也可通过 `ZHIPU_API_KEY` 环境变量设置 | - |
-| `deepseekApiKey` | DeepSeek API Key，也可通过 `DEEPSEEK_API_KEY` 环境变量设置 | - |
-| `ai.provider` | AI 服务商：`glm` 或 `deepseek` | 按已配 key 自动推断，否则 `glm` |
-| `ai.providers` | 优先级列表，前一个失败时 fallback 到下一个 | 同上 |
-| `ai.model` | 模型名 | GLM: `glm-4.7-flash` / DeepSeek: `deepseek-v4-flash` |
-| `ai.count` | 生成名称数量（5-20） | `5` |

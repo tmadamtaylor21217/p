@@ -18,16 +18,25 @@ import { runHooks } from "../core/hooks";
 import {
 	getProjectPath,
 	listProjects,
+	projectExists,
 	saveProjectMeta,
 	validateProjectName,
+	validateProjectNameFormat,
 } from "../core/project";
 import {
 	applyTemplate,
 	getAllTemplates,
 	getTemplateChoices,
 } from "../core/template";
-import { generateProjectNames, getProviderName, LLMError } from "../utils/llm";
+import { maybeWatchCchiveSync } from "../utils/cchive";
+import {
+	buildNamingPrompt,
+	generateNamesViaClaude,
+	isDescriptionInput,
+	type NameSuggestion,
+} from "../utils/naming";
 import { CONFIG_PATH, PROJECTS_DIR } from "../utils/paths";
+import { isClaudeCommand, resolveOverflowSettings } from "../utils/providers";
 import { CANCEL, selectOrInput } from "../utils/select-or-input";
 import {
 	commandExists,
@@ -35,10 +44,44 @@ import {
 	execInDir,
 	isTUICommand,
 	openWithIDE,
+	supportsPromptArg,
 } from "../utils/shell";
 import { bgOrange, brand, printError, printInfo } from "../utils/ui";
 
-const _REGENERATE = Symbol("regenerate");
+/**
+ * 项目已存在：提示后直接打开已有项目
+ */
+async function openExistingProject(
+	projectName: string,
+	openIde: string,
+): Promise<void> {
+	const projectPath = getProjectPath(projectName);
+	printError(
+		`项目已存在: ${brand.primary(projectName)}${pc.dim("，直接打开")}`,
+	);
+
+	if (isTUICommand(openIde)) {
+		// TUI（如 claude）前台运行，不能用 spinner
+		try {
+			await openWithIDE(openIde, projectPath);
+		} catch (error) {
+			printError((error as Error).message);
+			console.log(pc.dim("  项目路径: ") + pc.underline(projectPath));
+		}
+		return;
+	}
+
+	const s = spinner();
+	s.start(`正在打开 ${openIde}...`);
+	try {
+		await openWithIDE(openIde, projectPath);
+		s.stop(`已用 ${openIde} 打开`);
+	} catch (error) {
+		s.stop(`打开 ${openIde} 失败`);
+		printError((error as Error).message);
+		console.log(pc.dim("  项目路径: ") + pc.underline(projectPath));
+	}
+}
 
 export const newCommand = new Command("new")
 	.alias("n")
@@ -46,19 +89,16 @@ export const newCommand = new Command("new")
 	.description("创建新项目")
 	.argument("[name]", "项目名称（支持 #tag 添加标签）")
 	.option("-t, --template [template]", "使用指定模板")
-	.option("-d, --desc <text>", "用描述生成项目名（AI 命名）")
 	.option("-i, --ide <ide>", "指定打开方式（claude, cursor, code 等）")
-	.option("--debug", "AI 调试模式")
 	.allowExcessArguments(true)
 	.action(
 		async (
 			name?: string,
 			options?: {
 				template?: string | boolean;
-				desc?: string;
 				ide?: string;
-				debug?: boolean;
 			},
+			command?: Command,
 		) => {
 			// 检测 p new -- <command> 模式
 			const rawArgs = process.argv;
@@ -230,6 +270,7 @@ export const newCommand = new Command("new")
 							pc.dim(`  正在启动 ${openIde}: `) +
 								brand.primary(newProjects[0] ?? ""),
 						);
+						// CCHive 同步由 openWithIDE 的 TUI 分支统一处理
 						try {
 							await openWithIDE(openIde, firstProject);
 						} catch (error) {
@@ -264,15 +305,28 @@ export const newCommand = new Command("new")
 			const cleanName =
 				nameParts.filter((p) => !p.startsWith("#")).join(" ") || name;
 
-			// 快速模式：只有项目名，没有 -t / --desc 参数 → 使用 empty 模板
-			const isQuickMode = cleanName && !options?.template && !options?.desc;
+			// 完整位置参数（剔除 #tag）：含中文或多个词 → 视为需求描述
+			const rawInput = (command?.args ?? [])
+				.filter((token) => !token.startsWith("#"))
+				.join(" ")
+				.trim();
+			const isDesc = isDescriptionInput(rawInput);
+
+			// 快速模式：单个合法项目名，无 -t → 使用 empty 模板
+			const isQuickMode = !isDesc && cleanName && !options?.template;
 
 			if (isQuickMode) {
-				// 验证项目名称
-				const validation = validateProjectName(cleanName);
+				// 验证项目名称格式
+				const validation = validateProjectNameFormat(cleanName);
 				if (!validation.valid) {
 					printError(validation.message ?? "项目名称无效");
 					process.exit(1);
+				}
+
+				// 项目已存在：提示后直接打开
+				if (projectExists(cleanName)) {
+					await openExistingProject(cleanName, options?.ide || config.ide);
+					return;
 				}
 
 				const projectPath = getProjectPath(cleanName);
@@ -338,94 +392,59 @@ export const newCommand = new Command("new")
 			intro(bgOrange(" 创建新项目 "));
 
 			// 1. 获取项目名称
-			let projectName = cleanName;
+			let projectName = isDesc ? "" : cleanName;
 
-			// AI 命名模式
-			if (options?.desc) {
-				const desc = options.desc;
+			// 需求描述模式：调用本地 claude CLI 生成候选项目名
+			let description = "";
+			if (isDesc) {
+				description = rawInput;
 
-				// Debug 模式：只输出调试信息，不进入选择流程
-				if (options?.debug) {
-					await generateProjectNames(desc, { debug: true });
-					return;
+				const seen: string[] = []; // 换一批时排除的已生成名称
+				let suggestions: NameSuggestion[] = [];
+
+				const filterSuggestions = (items: NameSuggestion[]): NameSuggestion[] =>
+					items.filter(
+						(s) =>
+							validateProjectNameFormat(s.name).valid && !projectExists(s.name),
+					);
+
+				let hasClaude = await commandExists("claude");
+				if (hasClaude) {
+					const sGen = spinner();
+					sGen.start("正在生成候选项目名…");
+					const result = await generateNamesViaClaude(
+						buildNamingPrompt(description),
+					);
+					if (result.ok) {
+						suggestions = filterSuggestions(result.suggestions);
+						seen.push(...result.suggestions.map((s) => s.name));
+						sGen.stop(`已生成 ${suggestions.length} 个候选名`);
+					} else {
+						hasClaude = false;
+						sGen.stop("候选名生成失败");
+						console.log(pc.dim(`  原因: ${result.error}（可直接手动输入）`));
+					}
+				} else {
+					console.log(pc.dim("  未检测到 claude CLI，请直接输入项目名"));
 				}
 
-				try {
-					const allGenerated: string[] = [];
-					let suggestions: string[] = [];
-					let linesPrinted = 0;
-
-					const generateNames = async () => {
-						// 清除之前的建议
-						if (linesPrinted > 0) {
-							process.stdout.write(`\x1b[${linesPrinted}A`);
-							for (let i = 0; i < linesPrinted; i++) {
-								process.stdout.write("\x1b[2K\n");
-							}
-							process.stdout.write(`\x1b[${linesPrinted}A`);
-							linesPrinted = 0;
-						}
-
-						const result = await generateProjectNames(desc, {
-							onName: (name) => {
-								console.log(`  ${brand.secondary("│")} ${brand.primary(name)}`);
-								linesPrinted++;
-							},
-							onProvider: ({ provider, fellBackFrom }) => {
-								// fallback 时清除上一行 header（此时还没 onName，linesPrinted 应为 1）
-								if (linesPrinted > 0) {
-									process.stdout.write(`\x1b[${linesPrinted}A`);
-									for (let i = 0; i < linesPrinted; i++) {
-										process.stdout.write("\x1b[2K\n");
-									}
-									process.stdout.write(`\x1b[${linesPrinted}A`);
-									linesPrinted = 0;
-								}
-								const providerLabel = getProviderName(provider);
-								const note = fellBackFrom
-									? pc.yellow(
-											` (${getProviderName(fellBackFrom)} 失败，使用 ${providerLabel})`,
-										)
-									: pc.dim(` (${providerLabel})`);
-								console.log(
-									`  ${brand.secondary("◆")} ${pc.dim("AI 命名建议")}${note}`,
-								);
-								linesPrinted = 1;
-							},
-							exclude: allGenerated,
-						});
-
-						suggestions = result as string[];
-						allGenerated.push(...suggestions);
-					};
-
-					await generateNames();
-
+				if (hasClaude) {
 					// 选择循环
 					for (;;) {
-						// 清除建议块
-						if (linesPrinted > 0) {
-							process.stdout.write(`\x1b[${linesPrinted}A`);
-							for (let i = 0; i < linesPrinted; i++) {
-								process.stdout.write("\x1b[2K\n");
-							}
-							process.stdout.write(`\x1b[${linesPrinted}A`);
-							linesPrinted = 0;
-						}
-
-						// 构建选项
-						const selectOptions = [
-							...suggestions.map((n) => ({ value: n, label: n })),
-							{
-								value: "__regenerate__",
-								label: pc.cyan("换一批"),
-								hint: "重新生成",
-							},
-						];
-
 						const choice = await selectOrInput({
 							message: "选择项目名称:",
-							options: selectOptions,
+							options: [
+								...suggestions.map((s) => ({
+									value: s.name,
+									label: s.name,
+									hint: s.reason ? pc.dim(s.reason) : undefined,
+								})),
+								{
+									value: "__regenerate__",
+									label: pc.cyan("换一批"),
+									hint: "重新生成",
+								},
+							],
 							placeholder: "直接输入自定义名称...",
 							validate: (value) => {
 								const validation = validateProjectName(value);
@@ -439,19 +458,24 @@ export const newCommand = new Command("new")
 						}
 
 						if (choice === "__regenerate__") {
-							await generateNames();
+							const sRegen = spinner();
+							sRegen.start("换一批生成中…");
+							const result = await generateNamesViaClaude(
+								buildNamingPrompt(description, seen),
+							);
+							if (result.ok) {
+								suggestions = filterSuggestions(result.suggestions);
+								seen.push(...result.suggestions.map((s) => s.name));
+								sRegen.stop(`已生成 ${suggestions.length} 个候选名`);
+							} else {
+								sRegen.stop("重新生成失败，保留上一批");
+							}
 							continue;
 						}
 
 						projectName = choice as string;
 						break;
 					}
-				} catch (error) {
-					if (error instanceof LLMError) {
-						printError(error.message);
-						process.exit(1);
-					}
-					throw error;
 				}
 			}
 
@@ -471,9 +495,15 @@ export const newCommand = new Command("new")
 				}
 				projectName = result as string;
 			} else {
-				// 验证项目名称（命令行传入或 AI 命名）
+				// 验证项目名称（命令行传入或描述命名）
 				const validation = validateProjectName(projectName);
 				if (!validation.valid) {
+					// 项目已存在：收尾后直接打开
+					if (projectExists(projectName)) {
+						outro(pc.dim("直接打开已有项目"));
+						await openExistingProject(projectName, options?.ide || config.ide);
+						return;
+					}
 					printError(validation.message ?? "项目名称无效");
 					process.exit(1);
 				}
@@ -525,6 +555,9 @@ export const newCommand = new Command("new")
 						process.exit(1);
 					}
 				}
+			} else if (isDesc) {
+				// 需求描述模式：跳过模板选择，直接用 empty 模板
+				templateKey = "empty";
 			} else {
 				// 没有 -t 参数但进入了交互模式（没有项目名）
 				const result = await select({
@@ -579,15 +612,60 @@ export const newCommand = new Command("new")
 			// 6. 执行 hooks（显示命令和输出）
 			await runHooks(config, templateKey, projectPath, projectName);
 
-			// 7. 保存项目元数据
-			saveProjectMeta(projectName, { template: templateKey, tags });
+			// 7. 保存项目元数据（需求描述即 first prompt）
+			saveProjectMeta(projectName, {
+				template: templateKey,
+				tags,
+				firstPrompt: description || undefined,
+			});
 
 			// 8. 打开
 			const openIde = options?.ide || config.ide;
 			console.log();
 
+			if (isTUICommand(openIde) && supportsPromptArg(openIde)) {
+				// 支持 prompt 的 TUI（claude）：收尾后带需求描述进入会话，直接开始开发
+				// （直接 spawn 不走 openWithIDE，CCHive 同步在此单独挂）
+				outro(brand.success("✨ 项目创建成功！进入开发…"));
+				const watcher = maybeWatchCchiveSync(config.cchiveSync, projectPath);
+				const bin = openIde.trim().split(/\s+/)[0] ?? openIde;
+
+				// 默认渠道（套餐）全账号并发满 → 溢出到配置的 API provider
+				const overflow = isClaudeCommand(bin)
+					? await resolveOverflowSettings()
+					: null;
+				if (overflow) {
+					printInfo(
+						`默认渠道已满，溢出到 ${brand.primary(overflow.provider.name)}`,
+					);
+				}
+
+				const proc = Bun.spawn(
+					[
+						bin,
+						"--dangerously-skip-permissions",
+						...(overflow ? ["--settings", overflow.settingsPath] : []),
+						description,
+					],
+					{
+						cwd: projectPath,
+						stdin: "inherit",
+						stdout: "inherit",
+						stderr: "inherit",
+						env: { ...process.env },
+					},
+				);
+				try {
+					await proc.exited;
+				} finally {
+					watcher?.stop();
+				}
+				return;
+			}
+
 			if (isTUICommand(openIde)) {
 				// TUI（如 claude）先收尾输出，再前台进入会话
+				// （CCHive 同步由 openWithIDE 的 TUI 分支统一处理）
 				outro(brand.success("✨ 项目创建成功！"));
 				try {
 					await openWithIDE(openIde, projectPath);

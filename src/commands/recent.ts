@@ -7,7 +7,12 @@ import { cursor as ansiCursor } from "sisteransi";
 import { loadConfig } from "../core/config";
 import { deleteProjectMeta, listProjects } from "../core/project";
 import { openWithIDE } from "../utils/shell";
-import { brand, formatRelativeTime, printInfo } from "../utils/ui";
+import {
+	brand,
+	formatRelativeTime,
+	printInfo,
+	truncateByWidth,
+} from "../utils/ui";
 
 const MAX_VISIBLE = 10;
 
@@ -84,7 +89,9 @@ export const recentCommand = new Command("recent")
 				const marker = isSelected ? brand.primary("◉") : pc.dim("○");
 				const name = isSelected ? brand.bold(p.name) : p.name;
 				const time = pc.dim(`  ${formatRelativeTime(p.modifiedAt)}`);
-				const note = p.note ? pc.dim(` — ${p.note}`) : "";
+				const note = p.firstPrompt
+					? pc.dim(` — ${truncateByWidth(p.firstPrompt, 40)}`)
+					: "";
 				const tpl = p.template ? ` ${pc.cyan(`[${p.template}]`)}` : "";
 				const tags = p.tags?.length
 					? ` ${pc.magenta(p.tags.map((t) => `#${t}`).join(" "))}`

@@ -9,6 +9,7 @@ import {
 	PROJECTS_DIR,
 	TEMPLATES_DIR,
 } from "../utils/paths";
+import { printInfo } from "../utils/ui";
 
 function deepMerge<T extends Record<string, unknown>>(base: T, override: T): T {
 	const result = { ...base } as Record<string, unknown>;
@@ -83,4 +84,85 @@ export function loadConfig(): Config {
 	} catch (error) {
 		throw new Error(`配置文件解析失败: ${(error as Error).message}`);
 	}
+}
+
+// 已废弃的顶层配置键（v1.25 移除 AI API 命名功能后不再读取，迁移时自动清理）
+const DEPRECATED_CONFIG_KEYS = ["apiKey", "deepseekApiKey", "ai"];
+
+/**
+ * 从 config.yaml 文本中移除废弃的顶层键（连同前导注释与子块），保留其余内容与注释。
+ * 纯文本处理，避免 yaml round-trip 丢失全部注释。
+ */
+export function stripDeprecatedKeys(
+	content: string,
+	keys: string[],
+): { content: string; removed: string[] } {
+	const lines = content.split("\n");
+	const out: string[] = [];
+	let pending: string[] = []; // 注释/空行缓冲，可能属于下一个键的前导说明
+	let skipping = false; // 正在跳过废弃键的子块
+	const removed: string[] = [];
+
+	for (const line of lines) {
+		const key = line.match(/^([A-Za-z_][\w-]*):/)?.[1]; // 顶层键行（无缩进）
+
+		if (key && keys.includes(key)) {
+			if (!removed.includes(key)) removed.push(key);
+			// 丢弃前导注释：pending 中最后一个空行之后的连续注释行
+			let cut = 0;
+			for (let i = pending.length - 1; i >= 0; i--) {
+				if (!pending[i]?.trim()) {
+					cut = i + 1;
+					break;
+				}
+			}
+			out.push(...pending.slice(0, cut));
+			pending = [];
+			skipping = true;
+			continue;
+		}
+
+		if (key) {
+			out.push(...pending, line);
+			pending = [];
+			skipping = false;
+			continue;
+		}
+
+		// 废弃键子块内的缩进行（子键/值/缩进注释）整体跳过
+		if (skipping && /^[ \t]+\S/.test(line)) continue;
+
+		if (line.trim() === "" || line.trimStart().startsWith("#")) {
+			if (skipping) {
+				// 废弃块内的空行直接跳过，避免删除区遗留连续空行
+				if (line.trim() === "") continue;
+				// 顶层注释（无缩进）结束子块跳过，视为下一键的前导注释
+				skipping = false;
+			}
+			pending.push(line);
+			continue;
+		}
+
+		// 缩进的值行，属于已落盘的键
+		out.push(...pending, line);
+		pending = [];
+	}
+
+	out.push(...pending);
+	return { content: out.join("\n"), removed };
+}
+
+/**
+ * 清理用户配置中废弃的键（一次性迁移，清理后不再触发）
+ */
+export async function migrateUserConfig(): Promise<void> {
+	if (!fse.existsSync(CONFIG_PATH)) return;
+	const content = fse.readFileSync(CONFIG_PATH, "utf-8");
+	const { content: cleaned, removed } = stripDeprecatedKeys(
+		content,
+		DEPRECATED_CONFIG_KEYS,
+	);
+	if (removed.length === 0) return;
+	await fse.writeFile(CONFIG_PATH, cleaned, "utf-8");
+	printInfo(`已清理配置中的废弃字段: ${removed.join(", ")}`);
 }

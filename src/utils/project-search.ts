@@ -1,4 +1,5 @@
 import pc from "picocolors";
+import { truncateByWidth } from "./ui";
 
 /**
  * 模糊匹配项目（子串匹配项目名、模板名或标签）
@@ -22,11 +23,10 @@ export function projectHint(p: {
 	template?: string;
 	tags?: string[];
 	path: string;
-	note?: string;
+	firstPrompt?: string;
 }): string {
-	if (p.note) {
-		const note = p.note.length > 30 ? `${p.note.slice(0, 30)}...` : p.note;
-		return pc.dim(note);
+	if (p.firstPrompt) {
+		return pc.dim(truncateByWidth(p.firstPrompt, 60));
 	}
 	const hints: string[] = [];
 	if (p.template) hints.push(pc.cyan(p.template));

@@ -33,16 +33,16 @@ function resolveProjectName(name: string): string | null {
 	return null;
 }
 
-async function setNote(projectName: string, noteText?: string) {
-	let note = noteText;
+async function setFirstPrompt(projectName: string, promptText?: string) {
+	let prompt = promptText;
 
-	if (!note && note !== "") {
+	if (!prompt && prompt !== "") {
 		const meta = getProjectMeta(projectName);
-		const existing = meta?.note || "";
+		const existing = meta?.firstPrompt || "";
 
 		const result = await text({
-			message: `输入备注 (${brand.primary(projectName)}):`,
-			placeholder: "简要描述项目用途...",
+			message: `输入 first prompt (${brand.primary(projectName)}):`,
+			placeholder: "创建项目时的初始需求...",
 			initialValue: existing,
 		});
 
@@ -51,52 +51,56 @@ async function setNote(projectName: string, noteText?: string) {
 			process.exit(0);
 		}
 
-		note = (result as string).trim();
+		prompt = (result as string).trim();
 	}
 
-	if (!note) {
-		saveProjectMeta(projectName, { note: undefined as unknown as string });
-		printSuccess(`已清除 ${brand.primary(projectName)} 的备注`);
+	if (!prompt) {
+		saveProjectMeta(projectName, { firstPrompt: undefined });
+		printSuccess(`已清除 ${brand.primary(projectName)} 的 first prompt`);
 	} else {
-		saveProjectMeta(projectName, { note });
+		saveProjectMeta(projectName, { firstPrompt: prompt });
 		printSuccess(
-			`已为 ${brand.primary(projectName)} 设置备注: ${pc.dim(note)}`,
+			`已为 ${brand.primary(projectName)} 设置 first prompt: ${pc.dim(prompt)}`,
 		);
 	}
 }
 
-async function clearNote(projectName: string) {
-	saveProjectMeta(projectName, { note: undefined as unknown as string });
-	printSuccess(`已清除 ${brand.primary(projectName)} 的备注`);
+async function clearFirstPrompt(projectName: string) {
+	saveProjectMeta(projectName, { firstPrompt: undefined });
+	printSuccess(`已清除 ${brand.primary(projectName)} 的 first prompt`);
 }
 
-async function showNote(projectName: string) {
+async function showFirstPrompt(projectName: string) {
 	const meta = getProjectMeta(projectName);
-	const note = meta?.note;
+	const prompt = meta?.firstPrompt;
 
-	if (!note) {
-		printInfo(`${brand.primary(projectName)} 没有备注`);
+	if (!prompt) {
+		printInfo(`${brand.primary(projectName)} 没有 first prompt`);
 		return;
 	}
 
 	console.log();
-	console.log(brand.primary(`  ${projectName}`) + pc.dim(": ") + pc.dim(note));
+	console.log(
+		brand.primary(`  ${projectName}`) + pc.dim(": ") + pc.dim(prompt),
+	);
 	console.log();
 }
 
-export const noteCommand = new Command("note")
+export const firstPromptCommand = new Command("first-prompt")
+	.alias("fp")
+	.alias("note")
 	.alias("notes")
-	.description("管理项目备注")
+	.description("管理项目 first prompt（创建时的初始需求）")
 	.argument("[project]", "项目名称或 . 表示当前目录")
-	.argument("[text]", "备注内容")
-	.option("-c, --clear", "清除备注")
+	.argument("[text]", "新的 first prompt 内容")
+	.option("-c, --clear", "清除 first prompt")
 	.action(
 		async (
 			project?: string,
-			noteText?: string,
+			promptText?: string,
 			options?: { clear?: boolean },
 		) => {
-			// p note — 无参数，显示当前项目备注
+			// p fp — 无参数，显示当前项目的 first prompt
 			if (!project) {
 				const currentDir = process.cwd();
 				const projects = listProjects();
@@ -107,7 +111,7 @@ export const noteCommand = new Command("note")
 					process.exit(1);
 				}
 
-				await showNote(current.name);
+				await showFirstPrompt(current.name);
 				return;
 			}
 
@@ -115,10 +119,10 @@ export const noteCommand = new Command("note")
 			if (!projectName) process.exit(1);
 
 			if (options?.clear) {
-				await clearNote(projectName);
+				await clearFirstPrompt(projectName);
 				return;
 			}
 
-			await setNote(projectName, noteText);
+			await setFirstPrompt(projectName, promptText);
 		},
 	);

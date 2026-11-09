@@ -1,21 +1,16 @@
 # P 配置文件
 
 # 默认打开方式（可选: claude, cursor, code, windsurf, trae，或自定义命令）
+# 用于 p new / p clone / p copy / p recent 等命令创建或打开项目时
 # claude 等 AI CLI（终端 TUI）会在项目目录直接启动终端会话
 ide: claude
 
-# 智谱 GLM API Key（用于 AI 生成项目名称，也可通过 ZHIPU_API_KEY 环境变量设置）
-apiKey:
+# GUI IDE（p o <项目> 用它打开；留空时自动探测 cursor/code/windsurf/trae）
+#editor: cursor
 
-# DeepSeek API Key（也可通过 DEEPSEEK_API_KEY 环境变量设置）
-deepseekApiKey:
-
-# AI 命名配置
-ai:
-  # provider: glm  # AI 服务商：glm | deepseek。缺省时按已配置的 key 自动推断（只配了 DeepSeek 就用 DeepSeek）
-  # providers: [deepseek, glm]  # 优先级列表：前一个失败时自动 fallback 到下一个（缺省时按已配 key 组合）
-  # model: glm-4.7-flash  # 模型名，留空时按 provider 选默认（GLM: glm-4.7-flash / DeepSeek: deepseek-v4-flash）
-  count: 5 # 生成名称数量（5-20）
+# p new 启动 claude 会话后自动同步到 CCHive 侧栏（写 ~/.claude/cchive.json 目录订阅）
+# 设为 false 关闭
+cchiveSync: true
 
 # 命令快捷方式（用于 p new -- <别名> <项目名>）
 #shortcuts:

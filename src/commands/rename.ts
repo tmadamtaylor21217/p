@@ -127,7 +127,9 @@ export const renameCommand = new Command("rename")
 		} else if (!projectExists(projectName)) {
 			const filtered = filterProjects(projects, projectName);
 			if (filtered.length === 1) {
-				console.log(pc.dim("  匹配到: ") + brand.primary(filtered[0]?.name ?? ""));
+				console.log(
+					pc.dim("  匹配到: ") + brand.primary(filtered[0]?.name ?? ""),
+				);
 				projectName = filtered[0]?.name ?? "";
 			} else if (filtered.length > 1) {
 				console.log(pc.dim(`  匹配到 ${filtered.length} 个项目`));

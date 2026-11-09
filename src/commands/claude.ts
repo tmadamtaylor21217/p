@@ -2,9 +2,12 @@ import { outro, spinner } from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
+import { loadConfig } from "../core/config";
 import { getProjectPath, listProjects, projectExists } from "../core/project";
+import { maybeWatchCchiveSync } from "../utils/cchive";
 import { CANCEL, liveSearch } from "../utils/live-search";
 import { filterProjects, projectHint } from "../utils/project-search";
+import { resolveOverflowSettings } from "../utils/providers";
 import { brand, printError, printInfo } from "../utils/ui";
 
 export const claudeCommand = new Command("claude")
@@ -107,7 +110,21 @@ export const claudeCommand = new Command("claude")
 		);
 		console.log();
 
-		const proc = Bun.spawn(["claude", "--dangerously-skip-permissions"], {
+		// 直接 spawn 不走 openWithIDE，CCHive 同步在此单独挂（cchiveSync 配置，默认开）
+		const watcher = maybeWatchCchiveSync(loadConfig().cchiveSync, projectPath);
+
+		// 默认渠道（套餐）全账号并发满 → 溢出到配置的 API provider。注入只能走
+		// --settings 片段：settings.json 的 env 块会覆盖继承的进程环境变量。
+		const overflow = await resolveOverflowSettings();
+		const args = ["claude", "--dangerously-skip-permissions"];
+		if (overflow) {
+			args.push("--settings", overflow.settingsPath);
+			printInfo(
+				`默认渠道已满，溢出到 ${brand.primary(overflow.provider.name)}`,
+			);
+		}
+
+		const proc = Bun.spawn(args, {
 			cwd: projectPath,
 			stdin: "inherit",
 			stdout: "inherit",
@@ -115,6 +132,11 @@ export const claudeCommand = new Command("claude")
 			env: { ...process.env },
 		});
 
-		const exitCode = await proc.exited;
+		let exitCode: number;
+		try {
+			exitCode = await proc.exited;
+		} finally {
+			watcher?.stop();
+		}
 		process.exit(exitCode);
 	});
