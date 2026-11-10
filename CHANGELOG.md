@@ -1,5 +1,11 @@
 # p
 
+## 1.24.3
+
+### Patch Changes
+
+- revert: filterProjects 撤回子序列模糊匹配，恢复纯子串匹配（p s 命令保留）
+
 ## 1.24.2
 
 ### Patch Changes
