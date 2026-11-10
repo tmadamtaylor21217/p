@@ -15883,62 +15883,9 @@ async function liveSearch(opts) {
 
 // src/utils/project-search.ts
 var import_picocolors8 = __toESM(require_picocolors(), 1);
-function fuzzyScore(text, query) {
-  if (!query)
-    return 1;
-  const t = text.toLowerCase();
-  const q2 = query.toLowerCase();
-  let score = 0;
-  let cursor = 0;
-  let lastIdx = -2;
-  let streak = 0;
-  for (let i = 0;i < q2.length; i++) {
-    const ch = q2[i];
-    if (!ch)
-      continue;
-    const idx = t.indexOf(ch, cursor);
-    if (idx === -1)
-      return 0;
-    const prev = idx > 0 ? t[idx - 1] : "";
-    const isBoundary = idx === 0 || prev === "-" || prev === "_" || prev === "/" || prev === "." || prev === " ";
-    if (idx === lastIdx + 1) {
-      streak++;
-      score += 6 + streak * 2;
-    } else {
-      streak = 0;
-    }
-    score += 10;
-    if (isBoundary)
-      score += 8;
-    if (i === 0)
-      score += Math.max(0, 6 - idx);
-    cursor = idx + 1;
-    lastIdx = idx;
-  }
-  return score;
-}
 function filterProjects(projects, query) {
-  const q2 = query.trim().toLowerCase();
-  if (!q2)
-    return projects;
-  const scored = [];
-  for (const p2 of projects) {
-    const candidates = [p2.name];
-    if (p2.template)
-      candidates.push(p2.template);
-    for (const tag of p2.tags ?? [])
-      candidates.push(tag);
-    let best = 0;
-    for (const c of candidates) {
-      const s = fuzzyScore(c, q2);
-      if (s > best)
-        best = s;
-    }
-    if (best > 0)
-      scored.push({ project: p2, score: best });
-  }
-  scored.sort((a, b3) => b3.score - a.score);
-  return scored.map((s) => s.project);
+  const q2 = query.toLowerCase();
+  return projects.filter((p2) => p2.name.toLowerCase().includes(q2) || p2.template?.toLowerCase().includes(q2) || p2.tags?.some((tag) => tag.toLowerCase().includes(q2)));
 }
 function projectHint(p2) {
   if (p2.firstPrompt) {
